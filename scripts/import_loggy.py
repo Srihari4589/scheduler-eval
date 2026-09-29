@@ -27,7 +27,13 @@ def run_to_loggy(run: dict) -> dict:
     framework = parts[0] if parts else "unknown"
 
     summary = run.get("summary", {})
-    metadata = run.get("metadata", {})
+    # NOTE: runner.py's report has no "metadata" sub-object - git_sha lives at the
+    # top level of the run report. (Previously this always read {} here, so git_sha
+    # silently showed as "unknown" in every Loggy import even when a real sha existed.)
+    metadata = {
+        "git_sha": run.get("git_sha"),
+        "prompt_version": run.get("prompt_version"),  # not yet tracked by runner.py
+    }
 
     metrics = {}
     metric_directions = {

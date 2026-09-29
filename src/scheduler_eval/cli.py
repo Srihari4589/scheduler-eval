@@ -19,7 +19,7 @@ DEFAULT_SCENARIOS = Path(__file__).resolve().parents[2] / "data" / "scenarios.js
 @app.command()
 def benchmark(
     provider: str = typer.Option("fixture", help="fixture | gemini"),
-    model: str = typer.Option("gemini-2.0-flash", help="Model name, if provider=gemini"),
+    model: str = typer.Option("gemini-3.5-flash-lite", help="Model name, if provider=gemini"),
     scenarios: Path = typer.Option(DEFAULT_SCENARIOS, help="Path to scenarios .jsonl"),
     user_mode: str = typer.Option("scripted", help="scripted | interactive"),
     repeats: int = typer.Option(1, min=1, help="Run the whole benchmark N times to see variance"),
@@ -35,9 +35,11 @@ def benchmark(
         raise typer.BadParameter(f"Unknown provider: {provider}")
 
     all_summaries = []
+    all_errors = []
     for i in range(repeats):
         result = run_all(p, scenarios, provider_label=f"{provider}:{model}", user_mode=user_mode)
         all_summaries.append(result["summary"])
+        all_errors.append(result["errors"])
 
         if repeats > 1:
             typer.echo(f"\n=== run {i + 1}/{repeats} ===")
@@ -60,9 +62,26 @@ def benchmark(
         keys = [k for k in all_summaries[0] if any(s.get(k) is not None for s in all_summaries)]
         for k in keys:
             vals = [s[k] for s in all_summaries if s.get(k) is not None]
-            typer.echo(f"{k}: {min(vals):.4f} / {sum(vals) / len(vals):.4f} / {max(vals):.4f}")
+            # NOTE: a metric can have fewer than `repeats` values if some runs errored
+            # out entirely for every case (e.g. rate limits) - always show the count so
+            # a clean-looking average isn't mistaken for one backed by all N runs.
+            typer.echo(
+                f"{k}: {min(vals):.4f} / {sum(vals) / len(vals):.4f} / {max(vals):.4f}"
+                f"  (n={len(vals)}/{repeats})"
+            )
+        if any(e > 0 for e in all_errors):
+            typer.echo(
+                f"\nWarning: {sum(all_errors)} case-run(s) errored across these {repeats} "
+                f"runs (see per-run 'errors:' counts above, e.g. rate limits). The "
+                f"min/mean/max above only reflects runs/cases that succeeded."
+            )
 
     if judge != "none":
+        if repeats > 1:
+            typer.echo(
+                f"\nNote: --repeats={repeats} was used, but the judge only evaluates "
+                f"the LAST run (run {repeats}/{repeats}), not all repeats."
+            )
         typer.echo(f"\n=== L2 Qualitative Judge ({judge}:{judge_model}) ===")
         if judge == "gemini":
             j = GeminiJudge(model=judge_model)

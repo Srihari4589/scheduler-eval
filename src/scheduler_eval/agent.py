@@ -66,7 +66,7 @@ class FixtureProvider:
 class GeminiProvider:
     """Calls Google's Gemini API and parses its response into a ScheduleOutput."""
 
-    def __init__(self, model: str = "gemini-2.0-flash", api_key: str | None = None):
+    def __init__(self, model: str = "gemini-3.5-flash-lite", api_key: str | None = None):
         try:
             import google.generativeai as genai
         except ImportError as exc:  # pragma: no cover
