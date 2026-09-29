@@ -1,0 +1,23 @@
+[project]
+name = "scheduler-eval"
+version = "0.1.0"
+description = "A small scheduling agent plus an evaluation harness across quantitative, qualitative, and implicit signals."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+gemini = ["google-generativeai>=0.7"]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+scheduler-eval = "scheduler_eval.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scheduler_eval"]
