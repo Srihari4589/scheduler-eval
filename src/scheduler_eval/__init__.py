@@ -12,6 +12,7 @@ from .schemas import (
     ScheduleAssignment,
     ScheduleOutput,
 )
+from .judge import GeminiJudge, StubbornJudge
 
 __all__ = [
     "BlockedTime",
@@ -21,4 +22,6 @@ __all__ = [
     "ScenarioInput",
     "ScheduleAssignment",
     "ScheduleOutput",
+    "GeminiJudge",
+    "StubbornJudge",
 ]

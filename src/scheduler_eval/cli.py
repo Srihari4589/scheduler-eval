@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 
 from .agent import FixtureProvider, GeminiProvider
-from .runner import run_all
+from .judge import GeminiJudge, StubbornJudge
+from .runner import run_all, load_scenarios, _apply_correction_to_scenario
+from .schemas import ScheduleOutput
 
 app = typer.Typer(add_completion=False)
 
@@ -19,6 +23,8 @@ def benchmark(
     scenarios: Path = typer.Option(DEFAULT_SCENARIOS, help="Path to scenarios .jsonl"),
     user_mode: str = typer.Option("scripted", help="scripted | interactive"),
     repeats: int = typer.Option(1, min=1, help="Run the whole benchmark N times to see variance"),
+    judge: str = typer.Option("none", help="none | gemini | stubborn - L2 qualitative evaluation"),
+    judge_model: str = typer.Option("gemini-2.5-pro", help="Model name, if judge=gemini"),
 ):
     """Run every scenario through the chosen provider and print a summary."""
     if provider == "fixture":
@@ -55,6 +61,43 @@ def benchmark(
         for k in keys:
             vals = [s[k] for s in all_summaries if s.get(k) is not None]
             typer.echo(f"{k}: {min(vals):.4f} / {sum(vals) / len(vals):.4f} / {max(vals):.4f}")
+
+    if judge != "none":
+        typer.echo(f"\n=== L2 Qualitative Judge ({judge}:{judge_model}) ===")
+        if judge == "gemini":
+            j = GeminiJudge(model=judge_model)
+        elif judge == "stubborn":
+            j = StubbornJudge()
+        else:
+            raise typer.BadParameter(f"Unknown judge: {judge}")
+
+        for c in result["cases"]:
+            if c["error"]:
+                continue
+            final_raw = c["raw_schedules"][-1]
+            final_schedule = ScheduleOutput.model_validate(final_raw)
+            all_cases = load_scenarios(scenarios)
+            case = next((x for x in all_cases if x.id == c["case_id"]), None)
+            if case is None:
+                continue
+            final_input, _ = _apply_correction_to_scenario(case.input, case)
+
+            judge_result = j.evaluate(final_input, final_schedule, c["report"])
+            c["report"]["judge_good"] = judge_result["good"]
+            c["report"]["judge_critique"] = judge_result["critique"]
+            c["report"]["judge_scores"] = judge_result["scores"]
+
+            typer.echo(f"\n[{c['case_id']}] judge: {'GOOD' if judge_result['good'] else 'BAD'}")
+            typer.echo(f"  critique: {judge_result['critique']}")
+            for dim, score in judge_result["scores"].items():
+                typer.echo(f"  {dim}: {score:.2f}")
+
+        artifacts_dir = Path(__file__).resolve().parents[2] / "artifacts" / "runs"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        out_path = artifacts_dir / f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
+        result["_judge_path"] = str(out_path)
+        out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        typer.echo(f"\njudge report: {out_path}")
 
 
 if __name__ == "__main__":
