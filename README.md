@@ -5,7 +5,7 @@ A small scheduling agent, built to be evaluated across three kinds of signal:
 and **implicit** (inferred from behavior, like corrections and retries).
 
 This exists to *practice evaluation*, not to be a great scheduler. See
-`docs/` (or ask the person who gave you this) for the full project context.
+`docs/WHAT_GOOD_MEANS.md` for the shared definition of "good" and the team label format.
 
 ## The task
 
@@ -44,9 +44,19 @@ src/scheduler_eval/
   agent.py                    the actual agent: GeminiProvider + FixtureProvider
   grader.py                   plain-Python scoring (no AI)
   runner.py                   runs scenarios end-to-end, saves a report
+  judge.py                    LLM judge for qualitative schedule quality
   cli.py                      `scheduler-eval` command
+scripts/
+  review_tool.py              HTML page for human good/bad labeling
+  export_labels.py            write labels in the team's shared JSONL format
+  inter_rater.py              Cohen's kappa between human raters
+  measure_agreement.py        LLM judge precision/recall vs human labels
+  import_loggy.py             import runs from Loggy
+  generate_report.py          build the PDF report
+docs/WHAT_GOOD_MEANS.md       shared definition of "good" (quant / qual / implicit)
 tests/                        unit + integration tests for the grader/harness itself
 artifacts/runs/               saved JSON reports, one per run
+artifacts/labels/             exported labels (shared format)
 ```
 
 ## Setup
@@ -70,7 +80,7 @@ scheduler-eval --provider fixture
 ```bash
 pip install -e ".[gemini]"
 export GEMINI_API_KEY=your_key     # Windows: set GEMINI_API_KEY=your_key
-scheduler-eval --provider gemini --model gemini-2.0-flash
+scheduler-eval --provider gemini --model gemini-3.5-flash-lite
 ```
 
 **Interactive mode** - type the mid-task correction yourself instead of using the
@@ -119,23 +129,34 @@ human-readable strings - read these when you're looking at traces by hand.
 1. Go to https://aistudio.google.com/apikey (a Google account is enough, no credit card).
 2. Create a key, then `export GEMINI_API_KEY=...` in your shell.
 
+## Judging and human labeling
+
+```bash
+scheduler-eval --provider gemini --judge          # LLM judge on the last repeat
+python scripts/review_tool.py                     # builds artifacts/review.html
+# label cases in the browser, export human_labels.json
+python scripts/export_labels.py --rater <yourname> --human human_labels.json
+python scripts/inter_rater.py artifacts/labels/*.jsonl      # kappa between raters
+python scripts/measure_agreement.py human_labels.json       # judge vs human P/R
+```
+
+The label format and what each dimension means are in `docs/WHAT_GOOD_MEANS.md`.
+
 ## What this repo does NOT yet cover
 
-This is Level 1 (quantitative unit tests) from Hamel's eval workflow
-(https://hamel.dev/blog/posts/evals/index.html). Still missing, on purpose, for now:
+This covers Level 1 (unit tests) and the tooling for Level 2 (judge + human labels)
+from Hamel's eval workflow (https://hamel.dev/blog/posts/evals/index.html). Still
+missing:
 
+- **Real human labels from 2+ people.** The tooling exists; the labeled data and
+  the agreement numbers do not yet.
 - **Tracing** - hook this up to Langfuse (or similar) so every run is a browsable trace.
-- **Qualitative judging** - human or LLM review of *schedule quality*, not just
-  constraint satisfaction (two schedules can both pass `hard_pass` and differ wildly
-  in how good they are).
-- **Human labeling + agreement** - get 2+ people to independently label real runs as
-  good/bad, and report how often they agree (e.g. Cohen's kappa).
-- **LLM-judge-vs-human comparison** - if you add an LLM judge, check its precision/
-  recall against the human labels, not raw agreement (Hamel is explicit about this).
-- **Variance / reliability analysis** - run the same scenario N times per model/prompt
-  and see how much the scores move around.
 - **A/B testing** - compare `planner_v1.txt` against a second prompt version, or one
   model against another, properly (fixed test set, multiple repeats).
+- **Per-dimension reporting.** The summary still averages metrics, which can hide a
+  single failing dimension. Read `hard_pass_rate` and `avg_regression_score` separately.
+
+See `KNOWN_ISSUES.md` for other limitations.
 
 ## Adding a new scenario
 
