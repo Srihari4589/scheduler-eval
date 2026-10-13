@@ -152,7 +152,7 @@ jq -c 'select(.span=="grade") | {case_id, hard: .report.hard_pass}' artifacts/tr
 ```
 These are plain local files. To browse them in Langfuse, `pip install -e ".[langfuse]"`, set the
 Langfuse env vars, and run `python -m scheduler_eval.langfuse_export artifacts/traces/<run>.jsonl`
-(add `--dry-run` to preview). The export is unit-tested but not yet run against a live project.
+(add `--dry-run` to preview). Verified on 2026-10-12 against Langfuse Cloud (US) with Langfuse SDK 4.17: all 6 fixture traces and their scores appeared.
 The `run_id` matches the report file in `artifacts/runs/`.
 
 ## Testing the judge itself
@@ -196,7 +196,7 @@ missing:
 
 - **Real human labels from 2+ people.** The tooling exists; the labeled data and
   the agreement numbers do not yet. This is the main open deliverable.
-- **Hosted tracing.** Traces are local JSONL; the optional Langfuse export is untested against a live project.
+- **Hosted tracing.** Traces are local JSONL; the optional Langfuse export was verified once on the fixture benchmark only (SDK 4.17), not on real Gemini runs.
 - **A/B testing** - compare `planner_v1.txt` against a second prompt version, or one
   model against another, properly (fixed test set, multiple repeats).
 - **Judge vs humans.** `evaluate_judge.py` only shows the judge catches planted

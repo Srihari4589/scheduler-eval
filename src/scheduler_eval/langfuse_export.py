@@ -10,9 +10,9 @@ harness never depends on Langfuse being installed or reachable.
 
 One Langfuse trace per case. Each numeric field of the grade report becomes a score.
 
-Honest limit: the conversion (`case_records`) is unit-tested, but the final send was
-written against the Langfuse v4 SDK (same `get_client` pattern as the teammate repo)
-and has not been run against a live Langfuse project from here.
+Verified 2026-10-12: sent the 6 fixture traces and their scores to Langfuse Cloud (US)
+with Langfuse SDK 4.17. Written for the v4 API (`start_as_current_observation`); v3 and
+earlier use different method names. Not yet tried on real Gemini runs.
 """
 
 from __future__ import annotations
