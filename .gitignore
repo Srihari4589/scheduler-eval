@@ -19,3 +19,7 @@ build/
 # Run artifacts (keep the directory, ignore contents)
 artifacts/runs/*
 !artifacts/runs/.gitkeep
+
+# Traces (keep the directory, ignore contents)
+artifacts/traces/*
+!artifacts/traces/.gitkeep

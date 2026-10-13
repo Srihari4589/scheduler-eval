@@ -16,6 +16,8 @@ from pathlib import Path
 from .agent import Provider, SimulatedUser
 from .grader import correction_compliance, grade_final
 from .schemas import BlockedTime, Meeting, ScenarioCase, ScenarioInput
+from .stats import case_gate, per_dimension_summary
+from .tracing import Trace, write_traces
 
 ARTIFACTS_DIR = Path(__file__).resolve().parents[2] / "artifacts" / "runs"
 
@@ -108,12 +110,16 @@ class CaseResult:
     report: dict
     error: str | None = None
     raw_schedules: list[dict] = field(default_factory=list)
+    trace: Trace | None = None
 
 
 def run_case(provider: Provider, case: ScenarioCase, user_mode: str = "scripted") -> CaseResult:
+    trace = Trace(case_id=case.id)
     try:
         # Turn 1: initial plan.
-        schedule_1 = provider.generate(case.input)
+        with trace.span("agent_turn_1", meetings=len(case.input.meetings)) as sp:
+            schedule_1 = provider.generate(case.input)
+            sp["assignments"] = [a.model_dump() for a in schedule_1.assignments]
         raw = [schedule_1.model_dump()]
         turns = 1
 
@@ -126,12 +132,17 @@ def run_case(provider: Provider, case: ScenarioCase, user_mode: str = "scripted"
             simulated_user = SimulatedUser(mode=user_mode)
             correction_text = simulated_user.get_correction(case.correction.text, schedule_1)
             correction_used = case.correction
+            trace.spans.append(
+                {"case_id": case.id, "span": "user_correction", "text": correction_text}
+            )
 
             prior_turns = [
                 {"role": "assistant", "content": schedule_1.model_dump_json()},
                 {"role": "user", "content": correction_text},
             ]
-            schedule_2 = provider.generate(case.input, prior_turns=prior_turns)
+            with trace.span("agent_turn_2") as sp:
+                schedule_2 = provider.generate(case.input, prior_turns=prior_turns)
+                sp["assignments"] = [a.model_dump() for a in schedule_2.assignments]
             raw.append(schedule_2.model_dump())
             turns = 2
 
@@ -140,28 +151,31 @@ def run_case(provider: Provider, case: ScenarioCase, user_mode: str = "scripted"
                 case.input, case
             )
 
-        report = grade_final(
-            schedule=final_schedule,
-            scenario_input=final_scenario_input,
-            original_meetings=original_meetings,
-            correction=correction_used,
-        )
-        if correction_used is not None:
-            # Did the FIRST schedule already conflict with the correction? If not, the
-            # correction never forced a change and a passing score proves little
-            # (this is the false-positive we found in attendee_unavailable_midtask).
-            turn1 = correction_compliance(
-                schedule_1, correction_used, final_scenario_input.meetings
+        with trace.span("grade") as sp:
+            report = grade_final(
+                schedule=final_schedule,
+                scenario_input=final_scenario_input,
+                original_meetings=original_meetings,
+                correction=correction_used,
             )
-            report["correction_exercised"] = float(any(v == 0.0 for v in turn1.values()))
+            if correction_used is not None:
+                # Did the FIRST schedule already conflict with the correction? If not, the
+                # correction never forced a change and a passing score proves little
+                # (this is the false-positive we found in attendee_unavailable_midtask).
+                turn1 = correction_compliance(
+                    schedule_1, correction_used, final_scenario_input.meetings
+                )
+                report["correction_exercised"] = float(any(v == 0.0 for v in turn1.values()))
+            report["gate"] = case_gate(report)
+            sp["report"] = {k: v for k, v in report.items() if k != "gate"}
         return CaseResult(
             case_id=case.id, description=case.description, turns=turns,
-            report=report, raw_schedules=raw,
+            report=report, raw_schedules=raw, trace=trace,
         )
     except Exception as exc:  # noqa: BLE001 - one bad case shouldn't kill the whole run
         return CaseResult(
             case_id=case.id, description=case.description, turns=0,
-            report={}, error=f"{exc}\n{traceback.format_exc()}",
+            report={}, error=f"{exc}\n{traceback.format_exc()}", trace=trace,
         )
 
 
@@ -189,11 +203,23 @@ def run_all(
     # Any correction_* keys, gathered dynamically since they only apply to some cases.
     correction_keys = {k for r in ok_results for k in r.report if k not in
                         ("hard_pass", "preference_score", "regression_score",
-                         "hard_violations", "regression_violations")}
+                         "hard_violations", "regression_violations", "gate")}
     for k in correction_keys:
         summary[f"avg_{k}"] = avg(k)
 
+    # Averages hide single-dimension failures (hard_pass 0 + everything else 1 still
+    # averages high). These strict numbers do not: a case passes only if EVERY
+    # dimension passes, and the weakest dimension is named.
+    dims = per_dimension_summary([r.report for r in ok_results])
+    summary["strict_pass_rate"] = dims["strict_pass_rate"]
+
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    trace_path = write_traces([r.trace for r in results if r.trace], run_id)
+
     report = {
+        "run_id": run_id,
+        "trace_path": str(trace_path),
+        "per_dimension": dims,
         "timestamp": datetime.now(UTC).isoformat(),
         "provider": provider_label,
         "user_mode": user_mode,
@@ -215,7 +241,7 @@ def run_all(
     }
 
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = ARTIFACTS_DIR / f"{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}.json"
+    out_path = ARTIFACTS_DIR / f"{run_id}.json"
     out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     report["_report_path"] = str(out_path)
     return report
