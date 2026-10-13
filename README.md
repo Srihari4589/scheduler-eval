@@ -46,7 +46,7 @@ src/scheduler_eval/
   runner.py                   runs scenarios end-to-end, saves a report
   judge.py                    LLM judge for qualitative schedule quality
   judge_eval.py               tests the judge against schedules with injected, known defects
-  stats.py                    bootstrap confidence intervals + per-dimension strict gating
+  stats.py                    bootstrap CIs (per repeat and per scenario) + per-dimension strict gating
   tracing.py                  one JSONL trace per run (every step, timing, grader output)
   langfuse_export.py          optional: push a trace to Langfuse (dry-run works without it)
   cli.py                      `scheduler-eval` command
@@ -55,6 +55,7 @@ scripts/
   export_labels.py            write labels in the team's shared JSONL format
   inter_rater.py              Cohen's kappa between human raters
   measure_agreement.py        LLM judge precision/recall vs human labels
+  dimension_agreement.py      grader/judge vs human consensus, per dimension (confusion matrix)
   evaluate_judge.py           judge vs injected known defects (fast check, no humans)
   import_loggy.py             import runs from Loggy
   generate_report.py          build the PDF report
@@ -116,10 +117,14 @@ scheduler-eval --provider gemini --model gemini-3.5-flash-lite --repeats 5
 ```
 Prints each run, then min / mean / max of every metric plus a 95% bootstrap
 confidence interval of the mean (`CI [low, high]`) and `n=` showing how many of the
-repeats produced a value. The CI only reflects run-to-run noise on this fixed
-scenario set, not whether six scenarios represent all schedules, and with fewer than
-5 repeats it is rough (the CLI says so). If scores never move, the scenarios are
-probably too easy.
+repeats produced a value. That first CI only reflects run-to-run noise on this fixed
+scenario set, and with fewer than 5 repeats it is rough (the CLI says so).
+
+A second block, "scenario-level 95% CI", resamples the scenarios themselves and then the
+repeats inside each one, so it also reflects that we only tried a handful of scenarios.
+It prints for every run, even with `--repeats 1`. Expect it to be wide; a metric that
+exists in fewer than 3 scenarios is flagged because its interval means nothing. If scores
+never move, the scenarios are probably too easy.
 
 ## Reading the scores
 

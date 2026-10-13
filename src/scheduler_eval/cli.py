@@ -10,7 +10,7 @@ from .agent import FixtureProvider, GeminiProvider
 from .judge import GeminiJudge, StubbornJudge
 from .runner import run_all, load_scenarios, _apply_correction_to_scenario
 from .schemas import ScheduleOutput
-from .stats import bootstrap_ci
+from .stats import bootstrap_ci, case_metric_table, cluster_bootstrap_ci
 
 app = typer.Typer(add_completion=False)
 
@@ -37,10 +37,12 @@ def benchmark(
 
     all_summaries = []
     all_errors = []
+    all_case_runs = []
     for i in range(repeats):
         result = run_all(p, scenarios, provider_label=f"{provider}:{model}", user_mode=user_mode)
         all_summaries.append(result["summary"])
         all_errors.append(result["errors"])
+        all_case_runs.append(result["cases"])
 
         if repeats > 1:
             typer.echo(f"\n=== run {i + 1}/{repeats} ===")
@@ -95,6 +97,22 @@ def benchmark(
                 f"runs (see per-run 'errors:' counts above, e.g. rate limits). The "
                 f"min/mean/max above only reflects runs/cases that succeeded."
             )
+
+    table = case_metric_table(all_case_runs)
+    if table:
+        n_scen = len({cid for m in table.values() for cid in m})
+        typer.echo(f"\n=== scenario-level 95% CI (resamples the {n_scen} scenarios, then the repeats) ===")
+        for name in sorted(table):
+            ci = cluster_bootstrap_ci(table[name])
+            lo, mean, hi = ci
+            few = "  <- too few scenarios for a real interval" if len(table[name]) < 3 else ""
+            typer.echo(
+                f"{name}: {mean:.3f}  CI [{lo:.3f}, {hi:.3f}]  (scenarios={len(table[name])}){few}"
+            )
+        typer.echo(
+            "Note: a wide interval here is honest. A few scenarios cannot show how the agent "
+            "does on all schedules; add scenarios before drawing conclusions."
+        )
 
     if judge != "none":
         if repeats > 1:
