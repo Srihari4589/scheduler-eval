@@ -69,9 +69,9 @@ def export(path: Path, dry_run: bool = False) -> int:
 
     client = get_client()
     for r in records:
-        with client.start_as_current_span(name=r["name"], input={"steps": len(r["steps"])}) as root:
+        with client.start_as_current_observation(name=r["name"], as_type="span", input={"steps": len(r["steps"])}) as root:
             for step in r["steps"]:
-                with client.start_as_current_span(name=step["name"], input=step["data"]) as sp:
+                with client.start_as_current_observation(name=step["name"], as_type="span", input=step["data"]) as sp:
                     sp.update(metadata={"duration_s": step["duration_s"]},
                               level="ERROR" if step["error"] else "DEFAULT",
                               status_message=step["error"])
