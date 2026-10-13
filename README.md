@@ -5,7 +5,7 @@ A small scheduling agent, built to be evaluated across three kinds of signal:
 and **implicit** (inferred from behavior, like corrections and retries).
 
 This exists to *practice evaluation*, not to be a great scheduler. See
-`docs/` (or ask the person who gave you this) for the full project context.
+`docs/WHAT_GOOD_MEANS.md` for the shared definition of "good" and the team label format.
 
 ## The task
 
@@ -44,9 +44,25 @@ src/scheduler_eval/
   agent.py                    the actual agent: GeminiProvider + FixtureProvider
   grader.py                   plain-Python scoring (no AI)
   runner.py                   runs scenarios end-to-end, saves a report
+  judge.py                    LLM judge for qualitative schedule quality
+  judge_eval.py               tests the judge against schedules with injected, known defects
+  stats.py                    bootstrap confidence intervals + per-dimension strict gating
+  tracing.py                  one JSONL trace per run (every step, timing, grader output)
+  langfuse_export.py          optional: push a trace to Langfuse (dry-run works without it)
   cli.py                      `scheduler-eval` command
+scripts/
+  review_tool.py              HTML page for human good/bad labeling
+  export_labels.py            write labels in the team's shared JSONL format
+  inter_rater.py              Cohen's kappa between human raters
+  measure_agreement.py        LLM judge precision/recall vs human labels
+  evaluate_judge.py           judge vs injected known defects (fast check, no humans)
+  import_loggy.py             import runs from Loggy
+  generate_report.py          build the PDF report
+docs/WHAT_GOOD_MEANS.md       shared definition of "good" (quant / qual / implicit)
 tests/                        unit + integration tests for the grader/harness itself
 artifacts/runs/               saved JSON reports, one per run
+artifacts/traces/             one JSONL trace per run (git-ignored)
+artifacts/labels/             exported labels (shared format)
 ```
 
 ## Setup
@@ -70,7 +86,7 @@ scheduler-eval --provider fixture
 ```bash
 pip install -e ".[gemini]"
 export GEMINI_API_KEY=your_key     # Windows: set GEMINI_API_KEY=your_key
-scheduler-eval --provider gemini --model gemini-2.0-flash
+scheduler-eval --provider gemini --model gemini-3.5-flash-lite
 ```
 
 **Interactive mode** - type the mid-task correction yourself instead of using the
@@ -98,8 +114,12 @@ model produced, every violation) to `artifacts/runs/<timestamp>.json`.
 ```bash
 scheduler-eval --provider gemini --model gemini-3.5-flash-lite --repeats 5
 ```
-Prints each run, then min / mean / max of every metric. If scores never move, the
-scenarios are probably too easy.
+Prints each run, then min / mean / max of every metric plus a 95% bootstrap
+confidence interval of the mean (`CI [low, high]`) and `n=` showing how many of the
+repeats produced a value. The CI only reflects run-to-run noise on this fixed
+scenario set, not whether six scenarios represent all schedules, and with fewer than
+5 repeats it is rough (the CLI says so). If scores never move, the scenarios are
+probably too easy.
 
 ## Reading the scores
 
@@ -111,31 +131,78 @@ scenarios are probably too easy.
 | `avg_added_meeting_present` / `avg_removed_meeting_absent` / etc. | did the agent actually comply with the specific correction given |
 | `avg_correction_exercised` | did the FIRST schedule already conflict with the correction? If a scenario shows 0 here, the correction never forced a change and a pass means little |
 
+**Averages hide failures, so read the strict numbers.** Every case report has a
+`gate`: a case is a *strict pass* only if every dimension (hard rules, regression,
+each correction check) is 1.0, and the failing dimensions are named. The run prints
+a per-dimension pass rate, the weakest dimension, and `strict_pass_rate`. A run with
+`hard_pass_rate` 0.0 can still average 0.6 across metrics; the strict rate will not.
+If `correction_exercised` is 0 for a case, the correction forced no change and its
+pass is flagged rather than trusted.
+
 `hard_violations` and `regression_violations` in the per-case report are
 human-readable strings - read these when you're looking at traces by hand.
+
+## Traces
+
+Every run writes `artifacts/traces/<run_id>.jsonl`, one line per step:
+`agent_turn_1`, `user_correction`, `agent_turn_2`, `grade`. Each line has the case id,
+timestamps, duration, the schedule the agent returned, and the grader's report.
+```bash
+jq -c 'select(.span=="grade") | {case_id, hard: .report.hard_pass}' artifacts/traces/<run_id>.jsonl
+```
+These are plain local files. To browse them in Langfuse, `pip install -e ".[langfuse]"`, set the
+Langfuse env vars, and run `python -m scheduler_eval.langfuse_export artifacts/traces/<run>.jsonl`
+(add `--dry-run` to preview). The export is unit-tested but not yet run against a live project.
+The `run_id` matches the report file in `artifacts/runs/`.
+
+## Testing the judge itself
+
+The LLM judge can be wrong too. `evaluate_judge.py` builds well-spaced valid schedules,
+injects one known defect each (missing meeting, double-booking, outside work hours,
+blocked time, everything back-to-back, everything crammed late), and measures whether
+the judge catches them:
+```bash
+python scripts/evaluate_judge.py --judge stubborn   # negative control: recall must be 0
+python scripts/evaluate_judge.py --judge gemini     # the real judge
+```
+It reports precision and recall for catching bad schedules, the false-positive rate
+on good ones, and recall per defect type. The judge is not shown the grader's verdict
+unless you pass `--show-grader`. The defects are synthetic and blatant, so this is a
+fast sanity check, **not** a substitute for real human labels.
 
 ## Getting a free Gemini key
 
 1. Go to https://aistudio.google.com/apikey (a Google account is enough, no credit card).
 2. Create a key, then `export GEMINI_API_KEY=...` in your shell.
 
+## Judging and human labeling
+
+```bash
+scheduler-eval --provider gemini --judge          # LLM judge on the last repeat
+python scripts/review_tool.py                     # builds artifacts/review.html
+# label cases in the browser, export human_labels.json
+python scripts/export_labels.py --rater <yourname> --human human_labels.json
+python scripts/inter_rater.py artifacts/labels/*.jsonl      # kappa between raters
+python scripts/measure_agreement.py human_labels.json       # judge vs human P/R
+```
+
+The label format and what each dimension means are in `docs/WHAT_GOOD_MEANS.md`.
+
 ## What this repo does NOT yet cover
 
-This is Level 1 (quantitative unit tests) from Hamel's eval workflow
-(https://hamel.dev/blog/posts/evals/index.html). Still missing, on purpose, for now:
+This covers Level 1 (unit tests) and the tooling for Level 2 (judge + human labels)
+from Hamel's eval workflow (https://hamel.dev/blog/posts/evals/index.html). Still
+missing:
 
-- **Tracing** - hook this up to Langfuse (or similar) so every run is a browsable trace.
-- **Qualitative judging** - human or LLM review of *schedule quality*, not just
-  constraint satisfaction (two schedules can both pass `hard_pass` and differ wildly
-  in how good they are).
-- **Human labeling + agreement** - get 2+ people to independently label real runs as
-  good/bad, and report how often they agree (e.g. Cohen's kappa).
-- **LLM-judge-vs-human comparison** - if you add an LLM judge, check its precision/
-  recall against the human labels, not raw agreement (Hamel is explicit about this).
-- **Variance / reliability analysis** - run the same scenario N times per model/prompt
-  and see how much the scores move around.
+- **Real human labels from 2+ people.** The tooling exists; the labeled data and
+  the agreement numbers do not yet. This is the main open deliverable.
+- **Hosted tracing.** Traces are local JSONL; the optional Langfuse export is untested against a live project.
 - **A/B testing** - compare `planner_v1.txt` against a second prompt version, or one
   model against another, properly (fixed test set, multiple repeats).
+- **Judge vs humans.** `evaluate_judge.py` only shows the judge catches planted
+  defects; whether it agrees with people is still unmeasured.
+
+See `KNOWN_ISSUES.md` for other limitations.
 
 ## Adding a new scenario
 

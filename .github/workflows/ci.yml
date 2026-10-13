@@ -31,3 +31,6 @@ jobs:
 
       - name: Run fixture benchmark (no AI, validates harness)
         run: scheduler-eval --provider fixture
+
+      - name: Judge negative control (stubborn judge must catch nothing)
+        run: python scripts/evaluate_judge.py --judge stubborn
