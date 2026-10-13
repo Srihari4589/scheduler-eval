@@ -36,6 +36,61 @@ def bootstrap_ci(
     return lo, sum(values) / n, hi
 
 
+def cluster_bootstrap_ci(
+    clusters: dict[str, list[float]], n_boot: int = 2000, alpha: float = 0.05, seed: int = 0
+) -> tuple[float, float, float] | None:
+    """Two-stage percentile bootstrap CI for a mean, treating each scenario as a cluster.
+
+    Stage 1 resamples scenarios with replacement; stage 2 resamples the repeats inside each
+    drawn scenario. So the interval reflects BOTH run-to-run noise and the fact that we only
+    tried a handful of scenarios. Returns (low, mean, high), where mean gives each scenario
+    equal weight, or None if there is no data.
+
+    Caveat: with ~6 scenarios the interval is wide on purpose, and it says nothing about
+    whether those scenarios represent all schedules a user might ask for.
+    """
+    clusters = {k: v for k, v in clusters.items() if v}
+    if not clusters:
+        return None
+    rng = random.Random(seed)
+    keys = list(clusters)
+    k = len(keys)
+    stats = []
+    for _ in range(n_boot):
+        total = 0.0
+        for key in rng.choices(keys, k=k):
+            vals = clusters[key]
+            total += sum(rng.choices(vals, k=len(vals))) / len(vals)
+        stats.append(total / k)
+    stats.sort()
+    lo = stats[int((alpha / 2) * n_boot)]
+    hi = stats[min(n_boot - 1, int((1 - alpha / 2) * n_boot))]
+    point = sum(sum(v) / len(v) for v in clusters.values()) / k
+    return lo, point, hi
+
+
+def case_metric_table(runs: list[list[dict]]) -> dict[str, dict[str, list[float]]]:
+    """Regroup repeated runs as {metric: {scenario_id: [value per repeat]}}.
+
+    `runs` is one list of case dicts ({"case_id", "error", "report"}) per repeat. Errored
+    cases are skipped, so a scenario can have fewer values than there were repeats.
+    Metrics: every pass/fail dimension, preference_score, and strict_pass (all dimensions).
+    """
+    table: dict[str, dict[str, list[float]]] = {}
+    for cases in runs:
+        for c in cases:
+            if c.get("error") or not c.get("report"):
+                continue
+            report = c["report"]
+            values = dict(dimension_scores(report))
+            if isinstance(report.get("preference_score"), (int, float)):
+                values["preference_score"] = float(report["preference_score"])
+            values["strict_pass"] = 1.0 if case_gate(report)["strict_pass"] else 0.0
+            for name, v in values.items():
+                table.setdefault(name, {}).setdefault(c["case_id"], []).append(v)
+    return table
+
+
 def dimension_scores(report: dict) -> dict[str, float]:
     """Every pass/fail dimension present in one case report (hard rules, regression,
     and each correction_* compliance check)."""
