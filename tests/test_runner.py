@@ -139,3 +139,26 @@ def test_stubborn_agent_on_sam_tuesday_is_caught_specifically():
     report = run_case(StubbornProvider(), case).report
     assert report["attendee_moved_off_unavailable_day"] == 0.0
     assert any("unavailable" in v for v in report["hard_violations"])
+
+
+def test_case_report_has_a_strict_gate_that_names_failures():
+    case = next(c for c in load_scenarios(SCENARIOS_PATH)
+                if c.id == "attendee_unavailable_midtask")
+    gate = run_case(StubbornProvider(), case).report["gate"]
+    assert gate["strict_pass"] is False
+    assert "attendee_moved_off_unavailable_day" in gate["failed_dimensions"]
+    perfect_gate = run_case(PerfectProvider(), case).report["gate"]
+    assert perfect_gate["strict_pass"] is True
+
+
+def test_run_case_records_a_trace_with_every_step(tmp_path):
+    from scheduler_eval.tracing import write_traces
+    import json
+    case = next(c for c in load_scenarios(SCENARIOS_PATH) if c.id == "add_meeting_midtask")
+    result = run_case(PerfectProvider(), case)
+    names = [s["span"] for s in result.trace.spans]
+    assert names == ["agent_turn_1", "user_correction", "agent_turn_2", "grade"]
+    path = write_traces([result.trace], "testrun", directory=tmp_path)
+    lines = [json.loads(x) for x in path.read_text().splitlines()]
+    assert all(x["run_id"] == "testrun" for x in lines)
+    assert all("duration_s" in x for x in lines if x["span"] != "user_correction")

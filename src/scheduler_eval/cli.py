@@ -10,6 +10,7 @@ from .agent import FixtureProvider, GeminiProvider
 from .judge import GeminiJudge, StubbornJudge
 from .runner import run_all, load_scenarios, _apply_correction_to_scenario
 from .schemas import ScheduleOutput
+from .stats import bootstrap_ci
 
 app = typer.Typer(add_completion=False)
 
@@ -49,6 +50,19 @@ def benchmark(
             if value is not None:
                 typer.echo(f"{key}: {value:.4f}")
 
+        pd = result["per_dimension"]
+        typer.echo("per-dimension pass rate (a case must pass ALL to count as strict pass):")
+        for name, d in pd["dimensions"].items():
+            typer.echo(f"  {name}: {d['pass_rate']:.2f}  (n={d['n']}, min={d['min']:.2f})")
+        if pd["weakest_dimension"]:
+            typer.echo(f"  weakest dimension: {pd['weakest_dimension']}")
+        if pd["not_exercised_cases"]:
+            typer.echo(
+                f"  note: {pd['not_exercised_cases']} case(s) never forced a change "
+                f"(correction_exercised=0); their pass means little"
+            )
+        typer.echo(f"trace: {result['trace_path']}")
+
         for c in result["cases"]:
             if c["error"]:
                 typer.echo(f"\n[{c['case_id']}] ERROR: {c['error'].splitlines()[0]}")
@@ -58,16 +72,22 @@ def benchmark(
                     typer.echo(f"  - {v}")
 
     if repeats > 1:
-        typer.echo("\n=== across all runs (min / mean / max) ===")
+        typer.echo("\n=== across all runs (min / mean / max, 95% bootstrap CI of the mean) ===")
         keys = [k for k in all_summaries[0] if any(s.get(k) is not None for s in all_summaries)]
         for k in keys:
             vals = [s[k] for s in all_summaries if s.get(k) is not None]
             # NOTE: a metric can have fewer than `repeats` values if some runs errored
             # out entirely for every case (e.g. rate limits) - always show the count so
             # a clean-looking average isn't mistaken for one backed by all N runs.
+            lo, mean, hi = bootstrap_ci(vals)
             typer.echo(
-                f"{k}: {min(vals):.4f} / {sum(vals) / len(vals):.4f} / {max(vals):.4f}"
-                f"  (n={len(vals)}/{repeats})"
+                f"{k}: {min(vals):.4f} / {mean:.4f} / {max(vals):.4f}"
+                f"  CI [{lo:.3f}, {hi:.3f}]  (n={len(vals)}/{repeats})"
+            )
+        if repeats < 5:
+            typer.echo(
+                f"Note: only {repeats} repeats - the CI is rough. Use --repeats 5 or more "
+                f"before drawing conclusions."
             )
         if any(e > 0 for e in all_errors):
             typer.echo(
