@@ -45,17 +45,23 @@ src/scheduler_eval/
   grader.py                   plain-Python scoring (no AI)
   runner.py                   runs scenarios end-to-end, saves a report
   judge.py                    LLM judge for qualitative schedule quality
+  judge_eval.py               tests the judge against schedules with injected, known defects
+  stats.py                    bootstrap confidence intervals + per-dimension strict gating
+  tracing.py                  one JSONL trace per run (every step, timing, grader output)
+  langfuse_export.py          optional: push a trace to Langfuse (dry-run works without it)
   cli.py                      `scheduler-eval` command
 scripts/
   review_tool.py              HTML page for human good/bad labeling
   export_labels.py            write labels in the team's shared JSONL format
   inter_rater.py              Cohen's kappa between human raters
   measure_agreement.py        LLM judge precision/recall vs human labels
+  evaluate_judge.py           judge vs injected known defects (fast check, no humans)
   import_loggy.py             import runs from Loggy
   generate_report.py          build the PDF report
 docs/WHAT_GOOD_MEANS.md       shared definition of "good" (quant / qual / implicit)
 tests/                        unit + integration tests for the grader/harness itself
 artifacts/runs/               saved JSON reports, one per run
+artifacts/traces/             one JSONL trace per run (git-ignored)
 artifacts/labels/             exported labels (shared format)
 ```
 
@@ -108,8 +114,12 @@ model produced, every violation) to `artifacts/runs/<timestamp>.json`.
 ```bash
 scheduler-eval --provider gemini --model gemini-3.5-flash-lite --repeats 5
 ```
-Prints each run, then min / mean / max of every metric. If scores never move, the
-scenarios are probably too easy.
+Prints each run, then min / mean / max of every metric plus a 95% bootstrap
+confidence interval of the mean (`CI [low, high]`) and `n=` showing how many of the
+repeats produced a value. The CI only reflects run-to-run noise on this fixed
+scenario set, not whether six scenarios represent all schedules, and with fewer than
+5 repeats it is rough (the CLI says so). If scores never move, the scenarios are
+probably too easy.
 
 ## Reading the scores
 
@@ -121,8 +131,44 @@ scenarios are probably too easy.
 | `avg_added_meeting_present` / `avg_removed_meeting_absent` / etc. | did the agent actually comply with the specific correction given |
 | `avg_correction_exercised` | did the FIRST schedule already conflict with the correction? If a scenario shows 0 here, the correction never forced a change and a pass means little |
 
+**Averages hide failures, so read the strict numbers.** Every case report has a
+`gate`: a case is a *strict pass* only if every dimension (hard rules, regression,
+each correction check) is 1.0, and the failing dimensions are named. The run prints
+a per-dimension pass rate, the weakest dimension, and `strict_pass_rate`. A run with
+`hard_pass_rate` 0.0 can still average 0.6 across metrics; the strict rate will not.
+If `correction_exercised` is 0 for a case, the correction forced no change and its
+pass is flagged rather than trusted.
+
 `hard_violations` and `regression_violations` in the per-case report are
 human-readable strings - read these when you're looking at traces by hand.
+
+## Traces
+
+Every run writes `artifacts/traces/<run_id>.jsonl`, one line per step:
+`agent_turn_1`, `user_correction`, `agent_turn_2`, `grade`. Each line has the case id,
+timestamps, duration, the schedule the agent returned, and the grader's report.
+```bash
+jq -c 'select(.span=="grade") | {case_id, hard: .report.hard_pass}' artifacts/traces/<run_id>.jsonl
+```
+These are plain local files. To browse them in Langfuse, `pip install -e ".[langfuse]"`, set the
+Langfuse env vars, and run `python -m scheduler_eval.langfuse_export artifacts/traces/<run>.jsonl`
+(add `--dry-run` to preview). The export is unit-tested but not yet run against a live project.
+The `run_id` matches the report file in `artifacts/runs/`.
+
+## Testing the judge itself
+
+The LLM judge can be wrong too. `evaluate_judge.py` builds well-spaced valid schedules,
+injects one known defect each (missing meeting, double-booking, outside work hours,
+blocked time, everything back-to-back, everything crammed late), and measures whether
+the judge catches them:
+```bash
+python scripts/evaluate_judge.py --judge stubborn   # negative control: recall must be 0
+python scripts/evaluate_judge.py --judge gemini     # the real judge
+```
+It reports precision and recall for catching bad schedules, the false-positive rate
+on good ones, and recall per defect type. The judge is not shown the grader's verdict
+unless you pass `--show-grader`. The defects are synthetic and blatant, so this is a
+fast sanity check, **not** a substitute for real human labels.
 
 ## Getting a free Gemini key
 
@@ -149,12 +195,12 @@ from Hamel's eval workflow (https://hamel.dev/blog/posts/evals/index.html). Stil
 missing:
 
 - **Real human labels from 2+ people.** The tooling exists; the labeled data and
-  the agreement numbers do not yet.
-- **Tracing** - hook this up to Langfuse (or similar) so every run is a browsable trace.
+  the agreement numbers do not yet. This is the main open deliverable.
+- **Hosted tracing.** Traces are local JSONL; the optional Langfuse export is untested against a live project.
 - **A/B testing** - compare `planner_v1.txt` against a second prompt version, or one
   model against another, properly (fixed test set, multiple repeats).
-- **Per-dimension reporting.** The summary still averages metrics, which can hide a
-  single failing dimension. Read `hard_pass_rate` and `avg_regression_score` separately.
+- **Judge vs humans.** `evaluate_judge.py` only shows the judge catches planted
+  defects; whether it agrees with people is still unmeasured.
 
 See `KNOWN_ISSUES.md` for other limitations.
 

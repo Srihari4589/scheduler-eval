@@ -186,8 +186,7 @@ def build_pdf():
         "No soft-preference gradation (binary per meeting, no partial credit)",
         "No attendee workload fairness check",
         "No temporal distribution check (all meetings on 2 days = evenly spread)",
-        "--repeats summary silently skips errored cases",
-        "No tracing / observability (no Langfuse integration)",
+                "Langfuse export exists but is untested against a live project",
         "No human evaluation workflow (tooling built, labels not yet collected)",
         "No automated A/B testing",
         "Gemini free-tier rate limits require spacing between runs",
@@ -213,10 +212,8 @@ def build_pdf():
         "Collect human labels using the review tool, then measure judge precision/recall",
         "Add harder scenarios: two corrections in a row, correction conflicting with blocked time, impossible correction",
         "Try a weaker model to confirm the grader discriminates good from bad",
-        "Integrate Langfuse tracing for browsable runs",
-        "Fix --repeats summary to warn about errors",
+        "Verify the Langfuse export against a live project",
         "Add soft-preference gradation and attendee fairness metrics",
-        "Write the 'what good means' document (half-page definition of schedule quality)",
         "Rotate Gemini API key (was visible in screen recording)",
     ]
     for step in next_steps:
