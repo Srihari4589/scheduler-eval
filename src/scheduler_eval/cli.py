@@ -8,30 +8,35 @@ import typer
 
 from .agent import FixtureProvider, GeminiProvider
 from .judge import GeminiJudge, StubbornJudge
+from .openai_adapter import OpenAIJudge, OpenAIProvider
 from .runner import run_all, load_scenarios, _apply_correction_to_scenario
 from .schemas import ScheduleOutput
 from .stats import bootstrap_ci, case_metric_table, cluster_bootstrap_ci
 
 app = typer.Typer(add_completion=False)
 
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_JUDGE_MODEL = "gemini-2.5-pro"
 DEFAULT_SCENARIOS = Path(__file__).resolve().parents[2] / "data" / "scenarios.jsonl"
 
 
 @app.command()
 def benchmark(
-    provider: str = typer.Option("fixture", help="fixture | gemini"),
-    model: str = typer.Option("gemini-3.5-flash-lite", help="Model name, if provider=gemini"),
+    provider: str = typer.Option("fixture", help="fixture | gemini | openai"),
+    model: str = typer.Option(DEFAULT_MODEL, help="Model name. For provider=openai, pass the exact id (or set OPENAI_MODEL)."),
     scenarios: Path = typer.Option(DEFAULT_SCENARIOS, help="Path to scenarios .jsonl"),
     user_mode: str = typer.Option("scripted", help="scripted | interactive"),
     repeats: int = typer.Option(1, min=1, help="Run the whole benchmark N times to see variance"),
-    judge: str = typer.Option("none", help="none | gemini | stubborn - L2 qualitative evaluation"),
-    judge_model: str = typer.Option("gemini-2.5-pro", help="Model name, if judge=gemini"),
+    judge: str = typer.Option("none", help="none | gemini | openai | stubborn - L2 qualitative evaluation"),
+    judge_model: str = typer.Option(DEFAULT_JUDGE_MODEL, help="Model name, if judge=gemini or openai"),
 ):
     """Run every scenario through the chosen provider and print a summary."""
     if provider == "fixture":
         p = FixtureProvider()
     elif provider == "gemini":
         p = GeminiProvider(model=model)
+    elif provider == "openai":
+        p = OpenAIProvider(model=None if model == DEFAULT_MODEL else model)
     else:
         raise typer.BadParameter(f"Unknown provider: {provider}")
 
@@ -123,6 +128,8 @@ def benchmark(
         typer.echo(f"\n=== L2 Qualitative Judge ({judge}:{judge_model}) ===")
         if judge == "gemini":
             j = GeminiJudge(model=judge_model)
+        elif judge == "openai":
+            j = OpenAIJudge(model=None if judge_model == DEFAULT_JUDGE_MODEL else judge_model)
         elif judge == "stubborn":
             j = StubbornJudge()
         else:

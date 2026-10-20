@@ -2,6 +2,7 @@
 
     python scripts/evaluate_judge.py --judge stubborn          # negative control, recall must be ~0
     python scripts/evaluate_judge.py --judge gemini            # needs GEMINI_API_KEY
+    python scripts/evaluate_judge.py --judge openai --judge-model <id>   # needs OPENAI_API_KEY
 
 Prints precision/recall for catching bad schedules, the false-positive rate on good
 ones, and recall per defect type. Add --show-grader to let the judge see the
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from scheduler_eval.judge import GeminiJudge, StubbornJudge  # noqa: E402
+from scheduler_eval.openai_adapter import OpenAIJudge  # noqa: E402
 from scheduler_eval.judge_eval import build_probes, evaluate_judge  # noqa: E402
 
 
@@ -29,14 +31,19 @@ def fmt(x):
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--judge", choices=["stubborn", "gemini"], default="stubborn")
-    ap.add_argument("--judge-model", default="gemini-2.5-pro")
+    ap.add_argument("--judge", choices=["stubborn", "gemini", "openai"], default="stubborn")
+    ap.add_argument("--judge-model", default=None, help="exact model id (openai) or gemini model name")
     ap.add_argument("--scenarios", default=str(ROOT / "data" / "scenarios.jsonl"))
     ap.add_argument("--show-grader", action="store_true")
     ap.add_argument("--out", default=None, help="write full results (incl. critiques) as JSON")
     args = ap.parse_args()
 
-    judge = StubbornJudge() if args.judge == "stubborn" else GeminiJudge(model=args.judge_model)
+    if args.judge == "stubborn":
+        judge = StubbornJudge()
+    elif args.judge == "openai":
+        judge = OpenAIJudge(model=args.judge_model)
+    else:
+        judge = GeminiJudge(model=args.judge_model or "gemini-2.5-pro")
     probes = build_probes(args.scenarios)
     res = evaluate_judge(judge, probes, show_grader_report=args.show_grader)
 
