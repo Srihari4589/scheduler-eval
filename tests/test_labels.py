@@ -95,3 +95,31 @@ def test_pairwise_ignores_machines_and_na():
     ]
     (res,) = inter_rater.pairwise(rows, "overall")
     assert res["raters"] == ("a", "b") and res["n"] == 2 and res["raw_agreement"] == 0.5
+
+
+def test_review_tool_keys_round_trip(tmp_path, monkeypatch):
+    """Labels made in the review page ("<run_id>/<case_id>") must reach the exported rows."""
+    import json
+
+    review_tool = _load("review_tool")
+    run = {"provider": "p", "timestamp": "t", "cases": [
+        {"case_id": "c1", "description": "d", "report": {"hard_pass": 1.0},
+         "raw_schedules": [{"assignments": []}]}]}
+    page = review_tool.build_review_html([("run_a", run), ("run_b", run)])
+    assert "run_a/c1" in page and "run_b/c1" in page
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    for rid in ("run_a", "run_b"):
+        (runs / f"{rid}.json").write_text(json.dumps(run))
+    human = tmp_path / "h.json"
+    human.write_text(json.dumps({"run_a/c1": "good", "run_b/c1": "bad"}))
+    monkeypatch.setattr(export_labels, "RUNS_DIR", runs)
+    monkeypatch.setattr(export_labels, "LABELS_DIR", tmp_path / "labels")
+    monkeypatch.setattr("sys.argv", ["x", "--rater", "ann", "--human", str(human)])
+    export_labels.main()
+    rows = []
+    for f in (tmp_path / "labels").glob("*.ann.jsonl"):
+        rows += [json.loads(line) for line in f.read_text().splitlines()]
+    human_rows = {(r["run_id"], r["label"]) for r in rows if r["source"] == "human"}
+    assert human_rows == {("run_a", "pass"), ("run_b", "fail")}

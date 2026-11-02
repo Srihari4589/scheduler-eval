@@ -100,13 +100,32 @@ def main() -> None:
     ap.add_argument("--human", help="human_labels.json exported from the review tool")
     args = ap.parse_args()
 
-    run, run_id = latest_run()
+    LABELS_DIR.mkdir(parents=True, exist_ok=True)
     human = None
     if args.human:
         human = {str(k): v for k, v in json.loads(Path(args.human).read_text(encoding="utf-8")).items()}
-    rows = build_rows(run, run_id, args.rater, human)
 
-    LABELS_DIR.mkdir(parents=True, exist_ok=True)
+    if human and any("/" in k for k in human):
+        # Review-tool labels are keyed "<run_id>/<case_id>", so labels from several runs
+        # can be exported at once: one output file per run.
+        by_run: dict[str, dict[str, str]] = {}
+        for key, verdict in human.items():
+            run_id, _, cid = key.partition("/")
+            by_run.setdefault(run_id, {})[cid] = verdict
+        for run_id, labels in sorted(by_run.items()):
+            run_path = RUNS_DIR / f"{run_id}.json"
+            if not run_path.exists():
+                print(f"Skipping {run_id}: no such run file")
+                continue
+            run = json.loads(run_path.read_text(encoding="utf-8"))
+            rows = build_rows(run, run_id, args.rater, labels)
+            out = LABELS_DIR / f"{run_id}.{args.rater or 'auto'}.jsonl"
+            out.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            print(f"Wrote {len(rows)} rows to {out}")
+        return
+
+    run, run_id = latest_run()
+    rows = build_rows(run, run_id, args.rater, human)
     out = LABELS_DIR / f"{run_id}.{args.rater or 'auto'}.jsonl"
     out.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
     print(f"Wrote {len(rows)} rows to {out}")

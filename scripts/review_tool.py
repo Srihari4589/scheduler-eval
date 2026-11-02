@@ -19,9 +19,10 @@ ARTIFACTS_DIR = Path(__file__).resolve().parents[1] / "artifacts" / "runs"
 OUTPUT_PATH = Path(__file__).resolve().parents[1] / "artifacts" / "review.html"
 
 
-def load_latest_runs(n: int = 5) -> list[dict]:
+def load_latest_runs(n: int = 5) -> list[tuple[str, dict]]:
+    """Return (run_id, run) pairs; run_id is the run file name without .json."""
     files = sorted(ARTIFACTS_DIR.glob("*.json"))[-n:]
-    return [json.loads(f.read_text(encoding="utf-8")) for f in files]
+    return [(f.stem, json.loads(f.read_text(encoding="utf-8"))) for f in files]
 
 
 def schedule_to_html(schedule: dict) -> str:
@@ -64,10 +65,10 @@ def grader_report_to_html(report: dict) -> str:
     return "\n".join(parts)
 
 
-def build_review_html(runs: list[dict]) -> str:
+def build_review_html(runs: list[tuple[str, dict]]) -> str:
     cases_html = []
     case_id = 0
-    for run in runs:
+    for run_id, run in runs:
         provider = run.get("provider", "unknown")
         timestamp = run.get("timestamp", "")
         for case in run.get("cases", []):
@@ -75,6 +76,7 @@ def build_review_html(runs: list[dict]) -> str:
                 continue
             case_id += 1
             cid = case["case_id"]
+            key = html.escape(f"{run_id}/{cid}", quote=True)  # labels are keyed by run and case
             desc = case.get("description", "")
             report = case.get("report", {})
             raw = case.get("raw_schedules", [])
@@ -90,8 +92,8 @@ def build_review_html(runs: list[dict]) -> str:
                     <div>{grader_report_to_html(report)}</div>
                 </div>
                 <div class="label-buttons">
-                    <button onclick="label({case_id}, 'good')">Good</button>
-                    <button onclick="label({case_id}, 'bad')">Bad</button>
+                    <button onclick="label({case_id}, '{key}', 'good')">Good</button>
+                    <button onclick="label({case_id}, '{key}', 'bad')">Bad</button>
                     <span id="label-{case_id}"></span>
                 </div>
             </div>
@@ -131,8 +133,8 @@ def build_review_html(runs: list[dict]) -> str:
     </div>
     <script>
         const labels = {{}};
-        function label(caseId, verdict) {{
-            labels[caseId] = verdict;
+        function label(caseId, key, verdict) {{
+            labels[key] = verdict;
             document.getElementById('label-' + caseId).textContent = '→ ' + verdict.toUpperCase();
         }}
         function exportLabels() {{
