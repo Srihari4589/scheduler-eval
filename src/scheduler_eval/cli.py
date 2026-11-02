@@ -40,11 +40,15 @@ def benchmark(
     else:
         raise typer.BadParameter(f"Unknown provider: {provider}")
 
+    # Record the model that actually ran (for openai it can come from OPENAI_MODEL,
+    # not from --model), so run files are never labeled with the wrong model.
+    model_label = getattr(p, "model_name", model)
+
     all_summaries = []
     all_errors = []
     all_case_runs = []
     for i in range(repeats):
-        result = run_all(p, scenarios, provider_label=f"{provider}:{model}", user_mode=user_mode)
+        result = run_all(p, scenarios, provider_label=f"{provider}:{model_label}", user_mode=user_mode)
         all_summaries.append(result["summary"])
         all_errors.append(result["errors"])
         all_case_runs.append(result["cases"])
